@@ -1,0 +1,1284 @@
+ rem +----------------------------------------------------------------------------------------+
+ rem |Primate Plunge v1.10 (compiled with batariBasic 1.0) May 2007	          	      |
+ rem | based on http://www.aelius.com/primateplunge/					      |
+ rem +----------------------------------------------------------------------------------------+
+
+ rem smartbranching on
+ set kernel_options player1colors pfcolors 
+ set romsize 8k
+
+begin
+ if joy0fire then goto init
+titlescreen
+ rem +----------------------------------------------------------------------------------------+
+ rem |TITLESCREEN									      |
+ rem +----------------------------------------------------------------------------------------+
+ rem |   titlescreen is done entirely in asm.  This code was adapted		 	      |
+ rem |   from Nick Bensema's "How to draw a playfield". I changed it			      |
+ rem |   to use a higher resolution playfield, reflected instead of			      |
+ rem |   asymmetrical, added a routine to jump out to the bB program			      |
+ rem |   when you hit fire, and added a sprite.						      |
+ rem +----------------------------------------------------------------------------------------+
+ asm
+Temp       = $80
+PlayfieldY = $90
+
+Start
+	SEI 			; Disable Interrupts
+	CLD  			; Clear the BCD Math Bit
+	LDX  #$FF		;
+	TXS 			; Set the stack to the beginning
+	LDA #0
+				;-------------------------------
+				; CLEAR TIA/MEMORY REGISTERS
+X1      STA 0,X			;  This is a loop that counts
+	DEX			;  down (DEX) & clears the
+	BNE X1			;  registers
+				;-------------------------------
+				;
+	JSR  GameInit		;Set Data Direction Registers
+MainLoop			;
+	JSR  VerticalBlank 	;Execute Vertical Blank
+	JSR  CheckSwitches 	;Check the console switches
+	JSR  GameCalc      	;Do Game Caluculations (During VBLANK)
+	JSR  DrawScreen    	;Draw the Screen
+	JSR  OverScan      	;Do more game calucations during overscan
+	JMP  MainLoop    	;Jump back to main loop to continue in an endless loop
+				;
+				;Note: VBLANK blanks TIA's output for that scanline
+				;      VSYNC moves to the next scanline 
+VerticalBlank  			;
+	LDX  #0			;
+	LDA  #2			;
+	STA  WSYNC  		;
+	STA  WSYNC		;
+	STA  WSYNC		;
+	STA  VSYNC 		;Begin Vertical Sync
+	STA  WSYNC 		;First Line of VSYNC
+	STA  WSYNC 	        ;Second Line of VSYNC
+				;----------------------
+			        ;VBLANK TIMING
+	LDA  #44       		; 37 Scanlines of VBLANK time, each Scanline uses 76 Cycles
+	STA  TIM64T		; 37*76=2888 (-14 to set timer/WSYNC) = 2876 cycles.
+			  	; 2880/64 = about 44.
+				;----------------------
+	LDA #0			;Clear Collision Latches
+	STA CXCLR		;
+				;----------------------
+				;End the VSYNC period.
+	STA  WSYNC 		;Third Line of VSYNC
+	STA  VSYNC 		; 
+	RTS  			; Begin scanning again (RTS=ReturnToScan?)
+CheckSwitches 
+       LDA INPT4	        ; Load Input
+       BMI ButtonNotPressed     ; skip to sub if !joy0fire
+; ----------------------------------------------------------------------------
+; CLEAR MEM & START batari Basic Game
+;
+; I had to add all of the stuff below in order to clear everything out
+; before the game starts.  It then jumps back to the bBasic "begin" subroutine
+; when the joystick button is pressed.
+; ----------------------------------------------------------------------------
+	SEI 			; Disable Interrupts
+	CLD  			; Clear the BCD Math Bit
+	LDX  #$FF		;
+	TXS 			; Set the stack to the beginning
+	lda #0			;
+ClearMem			;
+	sta 0,X			;
+	dex			;
+	bne ClearMem		;
+	lda #$00    		;
+	sta COLUBK  		;
+        lda #00			;
+	sta COLUP0		;
+			 	; clear collision latches again
+	LDA #0			;
+	STA CXCLR		;
+
+       BNE .begin  ; put a dot in front of the subroutine name to call a bB sub.
+ 
+ButtonNotPressed
+       RTS
+; ---------------------end buttonpress sub------------------------------------
+
+GameCalc 
+	RTS			;
+DrawScreen			;Screen Drawing Routines
+        LDA INTIM		;
+	BNE DrawScreen		;
+	STA WSYNC		;
+	STA VBLANK  		;
+	LDA #1			;Change to 1 or 2 for Reflected/Asymmetrical PF
+	STA CTRLPF		;Playfield Register
+	LDY #191 		;
+        LDA #0
+        STA COLUBK
+ScanLoop 
+	lda #$31
+	sta NUSIZ0
+	; ------------------------Draw Sprite------------------
+        ; Load up the Turbo title sprite
+	lda #198		;Load this value into A
+ 	sta COLUP0
+ 	;Store this as the color for the sprite
+	lda  Sprite-30,x+30 ;Load Sprite Graphic
+	sta  GRP0,40     ;Display it     
+        ; ------------------------end draw sprite--------------
+             
+
+	TYA
+	SEC                     ;
+	SBC PlayfieldY		;
+	LSR   			;Add another LSR or two to decrease the screen resolution.
+	TAX			;
+	LDA PFData0,X           ;Load up PFData0
+	STA WSYNC               ;
+	STA PF0                	;
+	LDA PFLColor,X          ;Load up the colors for PFData0
+	STA COLUP0              ;
+	STA COLUPF              ;
+	LDA PFData1,X           ;Load up PFData1
+	STA PF1                 ;
+	LDA PFRColor,X          ;Load up the colors for PFData1
+	STA COLUP1              ;
+	LDA PFData2,X           ;Load up PFData2
+	STA PF2                 ;
+	DEY			;
+	BNE ScanLoop		;
+				;---------------------
+	LDA #2			;Clear all Registers
+	STA WSYNC  		;
+				;---------------------
+				;
+	STA VBLANK 		;Make TIA output invisible
+				;
+	STY PF0			;
+	STY PF1			;
+	STY PF1			;
+	STY GRP0		;
+	STY GRP1		;
+	STY ENAM0		;
+	STY ENAM1		;
+	STY ENABL		;
+	RTS			;
+OverScan   			;
+	LDX #30			;
+KillLines			;
+	STA WSYNC		;
+	DEX			;
+	BNE KillLines		;
+	RTS			;
+GameInit			;
+				;
+        LDA #0			;
+	STA PlayfieldY		;
+	RTS			;
+
+;
+;Sprite and Playfield Graphics
+;
+
+Sprite
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%01000000
+        .byte #%01110000
+        .byte #%01000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%00011110
+        .byte #%00010010
+        .byte #%00010110
+        .byte #%00010000
+        .byte #%00011110
+        .byte #%00000000
+        .byte #%00001001
+        .byte #%00001011
+        .byte #%00001101
+        .byte #%00001001
+        .byte #%00000000
+        .byte #%00011100
+        .byte #%00010100
+        .byte #%00010100
+        .byte #%00010100
+        .byte #%00000000
+        .byte #%00111000
+        .byte #%00100000
+        .byte #%00100000
+        .byte #%10100000
+        .byte #%10000000
+        .byte #%11100000
+        .byte #%10100000
+        .byte #%11100000
+        .byte #%00000000
+        .byte #%01111110
+        .byte #%11111111
+        .byte #%11000000
+        .byte #%11000000
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%11000000
+        .byte #%11000000
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%00000000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%00000000
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11111111
+        .byte #%11111110
+        .byte #%00000000
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11011011
+        .byte #%11011011
+        .byte #%11111111
+        .byte #%11100110
+        .byte #%00000000
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%00011000
+        .byte #%11111111
+        .byte #%11111111
+        .byte #%00000000
+        .byte #%11000011
+        .byte #%11000110
+        .byte #%11001100
+        .byte #%11111110
+        .byte #%11111111
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11111111
+        .byte #%11111110
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%11000000
+        .byte #%11000000
+        .byte #%11111110
+        .byte #%11111111
+        .byte #%11000011
+        .byte #%11000011
+        .byte #%11111111
+        .byte #%01111110
+PFData0
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%00110000
+        .byte #%00000000
+        .byte #%01110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+        .byte #%00000000
+        .byte #%11110000
+
+PFData1
+        .byte #%00000100
+        .byte #%00001111
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00010000
+        .byte #%00111111
+        .byte #%00000010
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+
+        .byte #%00000100
+        .byte #%00001111
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00010000
+        .byte #%00111111
+        .byte #%00000010
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%10000000
+        .byte #%00000000
+        .byte #%11000000
+        .byte #%00000000
+        .byte #%10000000
+
+PFData2
+        .byte #%00000000
+        .byte #%00000011
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00001000
+        .byte #%00011111
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+
+        .byte #%00000000
+        .byte #%00000011
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00001000
+        .byte #%00011111
+        .byte #%00000001
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+        .byte #%00000000
+
+;
+;Color Table
+;--------------------------
+;GRAY		=	$00
+;GOLD		=	$10
+;ORANGE		=	$20
+;BURNTORANGE	=	$30
+;RED		=	$40
+;PURPLE		=	$50
+;PURPLEBLUE	=	$60
+;BLUE		=	$70
+;BLUE2		=	$80
+;LIGHTBLUE	=	$90
+;TURQUOISE	=	$A0
+;GREEN		=	$B0
+;BROWNGREEN	=	$C0
+;TANGREEN	=	$D0
+;TAN		=	$E0
+;BROWN		=	$F0
+;--------------------------
+;
+; PLAYFIELD COLORS
+;
+PFLColor ; Left side of screen
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+
+PFRColor ; Right side of screen
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+       .byte $B0,$F2,$B0,$F4,$B0,$F6,$B0,$F8
+       .byte $B0,$F8,$B0,$F6,$B0,$F4,$B0,$F2
+end
+ rem ----------------------------------------------------------------------------
+ rem END ASM TITLESCREEN
+ rem ----------------------------------------------------------------------------
+
+ rem ----------------------------------------------------------------------------
+ rem define playfield
+ rem ----------------------------------------------------------------------------
+
+init
+ playfield:
+ XX...........................XXX
+ XXX...........................XX
+ XX.............................X
+ XXXXX........................XXX
+ XX............................XX
+ XXXX...........................X
+ XX...........................XXX
+ XXXX..........................XX
+ XX.............................X
+ XXX........................XXXXX
+ XX.............................X
+ X.............................XX
+end
+
+ rem ----------------------------------------------------------------------------
+ rem initialize variables
+ rem ----------------------------------------------------------------------------
+ a=0   : rem screen shaker
+ c=0   : rem shake timer
+ e=0   : rem counter for how long powerup stays active
+ s=100 : rem scroll counter
+ f=0   : rem frame counter
+ g=80  : rem counter for back & forth movement of parachute
+ i=0   : rem color counter
+ l=1   : rem counter for number of screens that have passed
+ m=1   : rem part of scroll 8.8 variable
+ n=0   : rem part of scroll 8.8 variable
+ j=0   : rem part of mis 8.8 variable
+ k=0   : rem part of mis 8.8 variable
+ q=0   : rem 
+ r=0   : rem
+ t=0   : rem reverse scroller for ball
+ u=0   : rem powerup on/off flag
+ x=80  : rem monkey x pos
+ y=15  : rem monkey y pos
+ p=2   : rem skill level counter
+
+ rem ----------------------------------------------------------------------------
+ rem define variables
+ rem ----------------------------------------------------------------------------
+ dim shakescreen=a
+ dim scroll=m.n
+ dim mis=k.j
+ dim frame=f
+ dim screens=l
+ dim monkeyx=x
+ dim monkeyy=y
+ dim skill=p
+ dim rscroll=t
+ dim movechute=g
+ dim colorcounter=z
+
+ CTRLPF=$21
+ ballheight=4
+
+ rem ----------------------------------------------------------------------------
+ rem change the height of the playfield blocks
+ rem  haven't changed this from the default as of yet
+ rem ----------------------------------------------------------------------------
+
+ rem ----------------------------------------------------------------------------
+ rem define colors for the jungle playfield
+ rem ----------------------------------------------------------------------------
+ pfcolors:
+ 220
+ 220
+ 218
+ 218
+ 216
+ 214
+ 216
+ 218
+ 218
+ 220
+ 220
+ 220
+ 218
+ 218
+ 216
+ 214
+ 216
+ 218
+ 218
+ 220
+end
+
+ rem ----------------------------------------------------------------------------
+ rem define colors for the monkey sprite
+ rem ----------------------------------------------------------------------------
+ player1color:
+ $2
+ $2
+ $34
+ $34
+ $34
+ $36
+ $36
+ $36
+ $34
+ $34
+ $34
+ $32
+ $02
+ $02
+end
+
+ rem ----------------------------------------------------------------------------
+ rem set scorecolor to a dark green
+ rem ----------------------------------------------------------------------------
+ scorecolor=208
+
+main
+
+ rem ----------------------------------------------------------------------------
+ rem START MAIN GAME LOOP
+ rem ----------------------------------------------------------------------------
+
+ rem ----------------------------------------------------------------------------
+ rem Scroll Colors
+ rem ----------------------------------------------------------------------------
+ i=i+1
+ if i=3 then pfcolortable = pfcolortable + 4
+ if i=3 then colorcounter = colorcounter + 1
+ if i=3 then if colorcounter > 7 then pfcolortable = pfcolortable - 32: colorcounter = 0
+ if i=3 then i=0
+
+ rem ----------------------------------------------------------------------------
+ rem e counter is used in conjunction with the movechute routine,
+ rem it makes the powerup ball move back and forth in a specific pattern.
+ rem ----------------------------------------------------------------------------
+ e=e+1
+
+ rem ----------------------------------------------------------------------------
+ rem call movechute routine, which moves the powerup ball back and forth
+ rem this routine does nothing unless the ball is on the screen, which
+ rem is defined later.
+ rem ----------------------------------------------------------------------------
+ goto movechute bank2
+chuteret
+
+ rem ----------------------------------------------------------------------------
+ rem fill in the sides of the playfield (PF0)
+ rem ----------------------------------------------------------------------------
+ PF0=$F6
+
+ rem ----------------------------------------------------------------------------
+ rem gradually increase the scroll speed as the game progresses
+ rem ----------------------------------------------------------------------------
+
+ if screens=0 then scroll=scroll-0.2
+ if screens=1 then scroll=scroll-0.3
+ if screens=2 then scroll=scroll-0.4
+ if screens=3 then scroll=scroll-0.5
+ if screens=4 then scroll=scroll-0.5
+ if screens=5 then scroll=scroll-0.5
+ if screens=6 then scroll=scroll-0.6
+ if screens=7 then scroll=scroll-0.6
+ if screens=8 then scroll=scroll-0.6
+ if screens=9 then scroll=scroll-0.6
+ if screens=10 then scroll=scroll-0.7
+ if screens=11 then scroll=scroll-0.7
+ if screens=12 then scroll=scroll-0.7
+ if screens=13 then scroll=scroll-0.7
+ if screens=14 then scroll=scroll-0.7
+ if screens=15 then scroll=scroll-0.8
+ if screens=16 then scroll=scroll-0.8
+ if screens=17 then scroll=scroll-0.8
+ if screens=18 then scroll=scroll-0.8
+ if screens=19 then scroll=scroll-0.8
+ if screens=20 then scroll=scroll-0.9
+ if screens=21 then scroll=scroll-0.9
+ if screens=22 then scroll=scroll-0.9
+ if screens=23 then scroll=scroll-0.9
+ if screens=24 then scroll=scroll-0.9
+ if screens=25 then scroll=scroll-1.0
+ if screens=26 then scroll=scroll-1.0
+ if screens=27 then scroll=scroll-1.0
+ if screens=28 then scroll=scroll-1.0
+ if screens=29 then scroll=scroll-1.0
+ if screens=30 then scroll=scroll-1.1
+ if screens=31 then scroll=scroll-1.1
+ if screens=32 then scroll=scroll-1.1
+ if screens=33 then scroll=scroll-1.1
+ if screens=34 then scroll=scroll-1.1
+ if screens=35 then scroll=scroll-1.2
+ if screens=36 then scroll=scroll-1.3
+ if screens=37 then scroll=scroll-1.4
+ if screens=38 then scroll=scroll-1.5
+ if screens=39 then scroll=scroll-1.5
+ if screens=40 then scroll=scroll-1.5
+ if screens=41 then scroll=scroll-1.5
+ if screens=42 then scroll=scroll-1.5
+ if screens=43 then scroll=scroll-1.6
+ if screens=44 then scroll=scroll-1.6
+ if screens=45 then scroll=scroll-1.6
+ if screens=46 then scroll=scroll-1.6
+ if screens=47 then scroll=scroll-1.6
+ if screens=48 then scroll=scroll-1.6
+ if screens=49 then scroll=scroll-1.7
+ if screens=50 then scroll=scroll-1.7
+
+ rem ----------------------------------------------------------------------------
+ rem frame counter is used to make one sprite (tree branch) appear on screen
+ rem twice.  It causes a little flicker, but I needed at least two on-screen
+ rem branches!
+ rem ----------------------------------------------------------------------------
+ frame=frame+1
+ if frame>4 then frame=1
+
+ rem ----------------------------------------------------------------------------
+ rem if the scroll couter is less than 2, it gets reset.
+ rem ----------------------------------------------------------------------------
+ if scroll<2 then screens=screens+1: scroll=110.0:rem was 90
+
+ rem ----------------------------------------------------------------------------
+ rem set initial colors
+ rem ---------------------------------------------------------------------------- 
+ COLUPF=214
+ COLUBK=228
+ COLUP0=240
+
+ rem ----------------------------------------------------------------------------
+ rem set difficulty switches
+ rem  to change width of tree branches
+ rem ----------------------------------------------------------------------------
+ if !switchleftb then NUSIZ0=$30
+ if switchleftb then NUSIZ0=$35
+ rem NUSIZ1=$05
+
+ rem ----------------------------------------------------------------------------
+ rem powerup (show ball - which is the parachute pack)
+ rem parachute pack will appear on screen for about 3 scrolls of the branches
+ rem ----------------------------------------------------------------------------
+
+ if screens<4 then ballx=0:bally=0:goto skipball
+
+ rem if screen~4 then show powerup
+ if screens>5 && screens<12 then ballx=0:bally=0:goto skipball
+ 
+ rem if screen~12 then show powerup
+ if screens>13 && screens<21 then ballx=0:bally=0:goto skipball
+
+ rem if screen~20 then show powerup
+ if screens>22 && screens<28 then ballx=0:bally=0:goto skipball
+
+ rem if screen~28 then show powerup
+ if screens>29 && screens<36 then ballx=0:bally=0:goto skipball
+
+ rem if screen~36 then show powerup
+ if screens>37 && screens<42 then ballx=0:bally=0:goto skipball
+
+ rem if screen~42 then show powerup
+ if screens>43 && screens<48 then ballx=0:bally=0:goto skipball
+
+ rem if screen=48 then show powerup
+ if screens>49 && screens<51 then ballx=0:bally=0:goto skipball
+
+ if rscroll>109 then rscroll=0
+ 
+ rem ----------------------------------------------------------------------------
+ rem rscroll (reverse scroll) is for the powerup to drop down instead of
+ rem scrolling up
+ rem ----------------------------------------------------------------------------
+ rscroll=rscroll+1
+ ballx=movechute:bally=rscroll
+ if u=0 then AUDF0=72-movechute:AUDC0=1:AUDV0=4
+skipball
+
+ rem ----------------------------------------------------------------------------
+ rem if the player hits the ball, enable the powerup.
+ rem the powerup routine only sets the u variable to 1, more may be added l8r.
+ rem ----------------------------------------------------------------------------
+ if collision(player1,ball) then goto powerup
+powerret
+
+ rem ----------------------------------------------------------------------------
+ rem this setting makes the monkey 'float' in midair when the chute's on.
+ rem ----------------------------------------------------------------------------
+ if u=1 then monkeyy=monkeyy-1
+
+ rem ----------------------------------------------------------------------------
+ rem tree branch sprite
+ rem ----------------------------------------------------------------------------
+
+ player0:
+ %00000010
+ %00000100
+ %11111111
+ %11111111
+ %01000000
+ %10000000
+end
+
+ rem ----------------------------------------------------------------------------
+ rem monkey sprite.  Jump to monkey sprite w/parachute if the powerup flag
+ rem                 is turned on. (u=1)
+ rem ----------------------------------------------------------------------------
+ if u=1 then goto parachute
+ player1:
+ %11000011
+ %11000011
+ %01000010
+ %01000010
+ %00100100
+ %00100100
+ %00100100
+ %00111100
+ %00111100
+ %00111100
+ %01011010
+ %01011010
+ %10000001
+ %10000001
+ %10000001
+ %10000001
+end
+pararet
+
+ rem ----------------------------------------------------------------------------
+ rem the section below chooses the configuration of the tree branches
+ rem there is a set pattern up to 50 screen changes, it then resets.
+ rem   colors are changed at three points during the level progression...
+ rem ----------------------------------------------------------------------------
+
+ if screens<12 then COLUBK=228
+ if screens>11 && screens<24 then goto colorchange1
+ if screens>23 && screens<36 then goto colorchange2
+ if screens>35 && screens<51 then goto colorchange3
+colorret
+ if screens>50 then screens=1
+ if screens=1 then goto config1
+ if screens=2 then goto config5
+ if screens=3 then goto config4
+ if screens=4 then goto config2
+ if screens=5 then goto config3
+ if screens=6 then goto config6
+ if screens=7 then goto config1
+ if screens=8 then goto config3
+ if screens=9 then goto config5
+ if screens=10 then goto config4
+ if screens=11 then goto config5
+ if screens=12 then goto config4
+ if screens=13 then goto config3
+ if screens=14 then goto config2
+ if screens=15 then goto config1
+ if screens=16 then goto config3
+ if screens=17 then goto config4
+ if screens=18 then goto config2
+ if screens=19 then goto config1
+ if screens=20 then goto config5
+ if screens=21 then goto config2
+ if screens=22 then goto config4
+ if screens=23 then goto config6
+ if screens=24 then goto config2
+ if screens=25 then goto config5
+ if screens=26 then goto config4
+ if screens=27 then goto config5
+ if screens=28 then goto config1
+ if screens=29 then goto config5
+ if screens=30 then goto config3
+ if screens=31 then goto config5
+ if screens=32 then goto config4
+ if screens=33 then goto config3
+ if screens=34 then goto config2
+ if screens=35 then goto config1
+ if screens=36 then goto config4
+ if screens=37 then goto config3
+ if screens=38 then goto config2
+ if screens=39 then goto config3
+ if screens=40 then goto config5
+ if screens=41 then goto config4
+ if screens=42 then goto config3
+ if screens=43 then goto config2
+ if screens=44 then goto config1
+ if screens=45 then goto config4
+ if screens=46 then goto config6
+ if screens=47 then goto config2
+ if screens=48 then goto config4
+ if screens=49 then goto config5
+ if screens=50 then goto config4
+ 
+ rem ----------------------------------------------------------------------------
+ rem we want the config subs to be called from above, so I make sure
+ rem they're all skipped here...  probably unneeded, but it makes me feel better.
+ rem ----------------------------------------------------------------------------
+ goto skip 
+
+ rem ----------------------------------------------------------------------------
+ rem Each config section below is a different layout for the tree branches
+ rem there are six different configurations that appear in a designated order
+ rem in the section immediately preceeding this one.
+ rem 
+ rem the frame counter displays the sprite at two different locations
+ rem 'simultaneously' with flicker.
+ rem ----------------------------------------------------------------------------
+
+config1
+ if frame=1 then player0x=40:player0y=scroll:missile0x=65:missile0y=scroll+5
+ if frame=2 then player0x=100:player0y=scroll-10:missile0x=65:missile0y=scroll+5
+ if frame=3 then player0x=40:player0y=scroll:missile0x=65:missile0y=scroll+5
+ if frame=4 then player0x=100:player0y=scroll-10:missile0x=65:missile0y=scroll+5
+ 
+ goto skip
+
+config2
+ if frame=1 then player0x=35:player0y=scroll:missile0x=85:missile0y=scroll+15
+ if frame=2 then player0x=110:player0y=scroll-10:missile0x=85:missile0y=scroll+15
+ if frame=3 then player0x=35:player0y=scroll:missile0x=85:missile0y=scroll+15
+ if frame=4 then player0x=110:player0y=scroll-10:missile0x=85:missile0y=scroll+15
+ goto skip
+
+config3
+ if frame=1 then player0x=25:player0y=scroll:missile0x=55:missile0y=scroll+20
+ if frame=2 then player0x=75:player0y=scroll-10:missile0x=55:missile0y=scroll+20
+ if frame=3 then player0x=25:player0y=scroll:missile0x=55:missile0y=scroll+20
+ if frame=4 then player0x=75:player0y=scroll-10:missile0x=55:missile0y=scroll+20
+ goto skip
+
+config4
+ if frame=1 then player0x=45:player0y=scroll:missile0x=75:missile0y=scroll+15
+ if frame=2 then player0x=90:player0y=scroll-10:missile0x=75:missile0y=scroll+15
+ if frame=3 then player0x=45:player0y=scroll:missile0x=75:missile0y=scroll+15
+ if frame=4 then player0x=90:player0y=scroll-10:missile0x=75:missile0y=scroll+15
+ goto skip
+
+config5
+ if frame=1 then player0x=83:player0y=scroll-10:missile0x=110:missile0y=scroll+10
+ if frame=2 then player0x=0:player0y=0:missile0x=110:missile0y=scroll+10
+ if frame=3 then player0x=83:player0y=scroll-10:missile0x=110:missile0y=scroll+10
+ if frame=4 then player0x=0:player0y=0:missile0x=110:missile0y=scroll+10
+ goto skip
+
+config6
+ if frame=1 then player0x=97:player0y=scroll-10:missile0x=65:missile0y=scroll+10
+ if frame=2 then player0x=0:player0y=0:missile0x=65:missile0y=scroll+10
+ if frame=3 then player0x=97:player0y=scroll-10:missile0x=65:missile0y=scroll+10
+ if frame=4 then player0x=0:player0y=0:missile0x=65:missile0y=scroll+10
+ goto skip
+
+skip
+
+ rem ----------------------------------------------------------------------------
+ rem missile0 is the trampoline
+ rem  it will disappear before it scrolls of the top of the screen
+ rem ----------------------------------------------------------------------------
+ if missile0y<23 then missile0y=0
+ 
+ rem ----------------------------------------------------------------------------
+ rem define monkey's position on the screen
+ rem ----------------------------------------------------------------------------
+ player1x=monkeyx:player1y=monkeyy
+ 
+ rem ----------------------------------------------------------------------------
+ rem erase the tree branches from the screen at a certain scroll point
+ rem ----------------------------------------------------------------------------
+ if scroll<4 then player0y=0
+
+ rem ----------------------------------------------------------------------------
+ rem if you hold down the joystick, you won't grab branches.  It lets you 
+ rem release from a branch if you don't want to scroll all the way to the top
+ rem holding on to one.
+ rem ----------------------------------------------------------------------------
+ if joy0down then monkeyy=monkeyy+1:goto skipcol
+
+ rem ----------------------------------------------------------------------------
+ rem if the powerup flag is on, you're using the parachute.  We'll want to 
+ rem skip collision detection for grabbing branches while you've got the chute.
+ rem ----------------------------------------------------------------------------
+ if u=1 then goto skipit
+
+ rem ----------------------------------------------------------------------------
+ rem collision detection
+ rem ----------------------------------------------------------------------------
+ if collision(player1,missile0) then monkeyy=monkeyy-12:goto skipcol
+ if monkeyx < 70 && collision(player0,player1) then monkeyy=scroll+10
+ if monkeyx > 69 && collision(player0,player1) then monkeyy=scroll
+skipit
+
+ rem ----------------------------------------------------------------------------
+ rem check for left/right movement, keep the monkey in the game area.
+ rem ----------------------------------------------------------------------------
+ if monkeyx < 70 && collision(player1,playfield) then monkeyx=monkeyx+3
+ if monkeyx > 69 && collision(player1,playfield) then monkeyx=monkeyx-3
+ rem the following seems redundant, but I'm leaving it until I test it's removal.
+ if monkeyx<25 then monkeyx=monkeyx+2
+ if monkeyx>130 then monkeyx=monkeyx-2
+
+ rem ----------------------------------------------------------------------------
+ rem scoring.  as long as you're touching a tree branch, your score increases.
+ rem if the powerup flag is on, your get double the normal points for hanging
+ rem on to the parachute.
+ rem ----------------------------------------------------------------------------
+ if collision(player0,player1) then score=score+1
+ if u=1 then score=score+2
+
+ rem ----------------------------------------------------------------------------
+ rem if there's no collision, the monkey will fall.
+ rem ----------------------------------------------------------------------------
+ if !collision(player0,player1) then monkeyy=monkeyy+1
+skipcol
+
+ rem ----------------------------------------------------------------------------
+ rem joystick movement - left/right
+ rem ----------------------------------------------------------------------------
+ if joy0left then monkeyx=monkeyx-1
+ if joy0right then monkeyx=monkeyx+1
+
+ rem ----------------------------------------------------------------------------
+ rem draw the screen/scroll up
+ rem ----------------------------------------------------------------------------
+ drawscreen
+ pfscroll up
+
+ rem ----------------------------------------------------------------------------
+ rem monkey death
+ rem ----------------------------------------------------------------------------
+ if monkeyy>105 && !collision(player0,player1) then goto deadmonkey bank2
+
+ rem ----------------------------------------------------------------------------
+ rem sound effects
+ rem ----------------------------------------------------------------------------
+ b=b+1
+ if b>28 then b=1
+ if U=1 then AUDF0=b:AUDC0=6:AUDV0=6: goto skipaud
+ if U=0 && collision(player0,player1) then AUDF1=14:AUDC1=6:AUDV1=6 else AUDV1=0
+ if u=0 && collision(player0,player1) then AUDV0=0:goto skipaud
+ if u=0 && !collision(player0,player1) then AUDF0=scroll:AUDC0=14:AUDV0=9
+skipaud
+ goto main
+
+ rem ----------------------------------------------------------------------------
+ rem color changes
+ rem  background color changes as you progress in the game
+ rem ----------------------------------------------------------------------------
+colorchange1
+ COLUBK=198
+ goto colorret
+
+colorchange2
+ COLUBK=38
+ goto colorret
+
+colorchange3
+
+ COLUBK=18
+ goto colorret
+ 
+ rem ----------------------------------------------------------------------------
+ rem i made this a subroutine thinking i'd add more to it later...
+ rem ----------------------------------------------------------------------------
+powerup
+ u=1
+ goto powerret
+
+ rem ----------------------------------------------------------------------------
+ rem this changes the monkey sprite to one holding a parachute...
+ rem ----------------------------------------------------------------------------
+parachute
+  player1:
+ %11000011
+ %11000011
+ %01000010
+ %01000010
+ %00100100
+ %00100100
+ %00100100
+ %00111100
+ %00111100
+ %00111100
+ %01011010
+ %01011010
+ %10000001
+ %10000001
+ %10000001
+ %10000001
+ %01000010
+ %00100100
+ %11111111
+ %10000001
+ %10000001
+ %01000010
+ %00111100
+ %00011000
+end
+ goto pararet
+
+ rem ----------------------------------------------------------------------------
+ rem BANK 2 START
+ rem ----------------------------------------------------------------------------
+ bank 2
+
+ rem ----------------------------------------------------------------------------
+ rem monkey death routine - screen shakes, thud sound, joy0fire resets game
+ rem ----------------------------------------------------------------------------
+deadmonkey
+ if c>15 then AUDV0=0
+ if joy0fire then score=0:reboot
+ PF0=$F6
+ player0x=0:player0y=0
+ player1x=0:player1y=0
+ missile0x=0:missile0y=0
+ playfield:
+ XX...........................XXX
+ XXX...........................XX
+ XX.............................X
+ XXXXX........................XXX
+ XX............................XX
+ XXXX...........................X
+ XX...........................XXX
+ XXXX..........................XX
+ XX.............................X
+ XXX........................XXXXX
+ XX.............................X
+ X.............................XX
+end
+ drawscreen
+ if c>25 then goto deadmonkey
+   AUDF0=31:AUDC0=8:AUDV0=14
+   pfscroll upup
+   if b > 3 then shakescreen = 128 else shakescreen = 0
+   b = b + 1
+   if b = 8 then b = 0
+   c=c+1
+ goto deadmonkey
+
+ rem ----------------------------------------------------------------------------
+ rem movechute routine makes the powerup (ball) move back and forth
+ rem somewhere near the middle of the screen
+ rem ----------------------------------------------------------------------------
+movechute
+ if e=0 then movechute=movechute-3
+ if e=10 then movechute=movechute-3
+ if e=20 then movechute=movechute-3
+ if e=30 then movechute=movechute-3
+ if e=40 then movechute=movechute-3
+ if e=50 then movechute=movechute-3
+ if e=60 then movechute=movechute-3
+ if e=70 then movechute=movechute-3
+ if e=80 then movechute=movechute-3
+ if e=90 then movechute=movechute-3
+ if e=100 then movechute=movechute-3
+ if e=110 then movechute=movechute-3
+ if e=120 then movechute=movechute-3
+ if e=130 then movechute=movechute+3
+ if e=140 then movechute=movechute+3
+ if e=150 then movechute=movechute+3
+ if e=160 then movechute=movechute+3
+ if e=170 then movechute=movechute+3
+ if e=180 then movechute=movechute+3
+ if e=190 then movechute=movechute+3
+ if e=200 then movechute=movechute+3
+ if e=210 then movechute=movechute+3
+ if e=220 then movechute=movechute+3
+ if e=230 then movechute=movechute+3
+ if e=240 then movechute=movechute+3
+ if e=250 then movechute=movechute+3
+ if e>250 then u=0:e=0:movechute=80
+ goto chuteret bank1
