@@ -1,6 +1,8 @@
 # PrimatePlunge2600
 This is the code repository for the Atari 2600 game Primate Plunge.
 
+<img><img src="https://github.com/AtariusMaximus/PrimatePlunge2600/blob/main/PrimatePlunge_screenshot1.png">
+
 Development Thread:  https://forums.atariage.com/topic/106746-primate-plunge/#comment-1293463
 
 This game was inspired by a freeware OSX game I found back in 2007 called 'Primate Plunge'. It's made by Aelius games and can be seen here: http://www.aelius.com/primateplunge/.
